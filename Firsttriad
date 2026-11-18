@@ -1,0 +1,105 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local Config = {
+    Enabled = true,
+    Scale = 3 -- Default multiplier
+}
+
+-- Small GUI
+local gui = Instance.new("ScreenGui")
+gui.Name = "EnemyBigHeadUI"
+gui.ResetOnSpawn = false
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 150, 0, 100)
+main.Position = UDim2.new(0, 20, 0.5, -50)
+main.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = true
+main.Parent = gui
+local brand = Instance.new("TextLabel")
+brand.Size = UDim2.new(1, -20, 0, 15)
+brand.Position = UDim2.new(0, 10, 0, 82)
+brand.BackgroundTransparency = 1
+brand.Text = "FIRST TRIAD"
+brand.TextColor3 = Color3.fromRGB(212, 175, 55)
+brand.Font = Enum.Font.GothamBold
+brand.TextSize = 9
+brand.Parent = main
+
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+
+local btn = Instance.new("TextButton")
+btn.Size = UDim2.new(1, -20, 0, 30)
+btn.Position = UDim2.new(0, 10, 0, 10)
+btn.BackgroundColor3 = Color3.fromRGB(0, 150, 80)
+btn.Text = "BIGHEAD: ON"
+btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+btn.Font = Enum.Font.GothamBold
+btn.TextSize = 11
+btn.Parent = main
+Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+local slider = Instance.new("TextButton")
+slider.Size = UDim2.new(1, -20, 0, 20)
+slider.Position = UDim2.new(0, 10, 0, 50)
+slider.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+slider.Text = "Size: 3x"
+slider.TextColor3 = Color3.fromRGB(255, 255, 255)
+slider.Font = Enum.Font.GothamBold
+slider.TextSize = 10
+slider.Parent = main
+Instance.new("UICorner", slider).CornerRadius = UDim.new(0, 4)
+
+local scaleValue = 3
+slider.MouseButton1Click:Connect(function()
+    scaleValue = scaleValue + 1
+    if scaleValue > 6 then scaleValue = 1 end
+    slider.Text = "Size: " .. scaleValue .. "x"
+    Config.Scale = scaleValue
+    -- Re-apply to all existing enemies
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local head = plr.Character:FindFirstChild("Head")
+            if head then
+                head.Size = Vector3.new(2 * scaleValue, 1 * scaleValue, 1 * scaleValue)
+            end
+        end
+    end
+end)
+
+local function ApplyEnemyBigHead(plr)
+    if plr == LocalPlayer then return end
+    
+    local function setup(char)
+        local head = char:WaitForChild("Head", 5)
+        if not head then return end
+        if Config.Enabled then
+            head.Size = Vector3.new(2 * Config.Scale, 1 * Config.Scale, 1 * Config.Scale)
+        end
+    end
+    
+    if plr.Character then setup(plr.Character) end
+    plr.CharacterAdded:Connect(setup)
+end
+
+for _, plr in pairs(Players:GetPlayers()) do ApplyEnemyBigHead(plr) end
+Players.PlayerAdded:Connect(ApplyEnemyBigHead)
+
+btn.MouseButton1Click:Connect(function()
+    Config.Enabled = not Config.Enabled
+    btn.Text = Config.Enabled and "BIGHEAD: ON" or "BIGHEAD: OFF"
+    btn.BackgroundColor3 = Config.Enabled and Color3.fromRGB(0, 150, 80) or Color3.fromRGB(50, 50, 55)
+    
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local head = plr.Character:FindFirstChild("Head")
+            if head then
+                head.Size = Config.Enabled and Vector3.new(2 * Config.Scale, 1 * Config.Scale, 1 * Config.Scale) or Vector3.new(2, 1, 1)
+            end
+        end
+    end
+end)
