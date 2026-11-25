@@ -19,7 +19,7 @@ if parentGui:FindFirstChild("BlazdersESP") then
   parentGui.XenoGodzESP:Destroy()
 end
 
-local LOGO = "rbxassetid://92509676796006"
+local LOGO = "rbxassetid://135767227100121"
 local AVATAR = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId .. "&w=150&h=150"
 
 local Theme = {
