@@ -12,11 +12,11 @@ local Camera = workspace.CurrentCamera
 local parentGui = (gethui and gethui()) or game:GetService("CoreGui")
 
 if parentGui:FindFirstChild("BlazdersHub") then
-  parentGui.BlazdersHub:Destroy()
+  parentGui.XenoGodz:Destroy()
 end
 
 if parentGui:FindFirstChild("BlazdersESP") then
-  parentGui.BlazdersESP:Destroy()
+  parentGui.XenoGodzESP:Destroy()
 end
 
 local LOGO = "rbxassetid://92509676796006"
