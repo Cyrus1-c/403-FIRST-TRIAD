@@ -11,7 +11,7 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local parentGui = (gethui and gethui()) or game:GetService("CoreGui")
 
-if parentGui:FindFirstChild("BlazdersHub") then
+if parentGui:FindFirstChild("XenoGodz") then
   parentGui.XenoGodz:Destroy()
 end
 
@@ -393,7 +393,7 @@ local function makeSlider(parent, pos, size, key)
 end
 
 local gui = new("ScreenGui", {
-  Name = "BlazdersHub",
+  Name = "XenoGodz",
   ResetOnSpawn = false,
   IgnoreGuiInset = true,
   ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -1569,7 +1569,7 @@ end)
 
 task.spawn(function()
   local sound = Instance.new("Sound")
-  sound.SoundId = "rbxassetid://117909139728666"
+  sound.SoundId = "rbxassetid://"
   sound.Volume = 10
   sound.Parent = game:GetService("SoundService")
   sound.Ended:Connect(function()
