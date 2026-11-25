@@ -1,0 +1,2042 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local VirtualUser = game:GetService("VirtualUser")
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local parentGui = (gethui and gethui()) or game:GetService("CoreGui")
+
+if parentGui:FindFirstChild("BlazdersHub") then
+  parentGui.BlazdersHub:Destroy()
+end
+
+if parentGui:FindFirstChild("BlazdersESP") then
+  parentGui.BlazdersESP:Destroy()
+end
+
+local LOGO = "rbxassetid://92509676796006"
+local AVATAR = "rbxthumb://type=AvatarHeadShot&id=" .. LocalPlayer.UserId .. "&w=150&h=150"
+
+local Theme = {
+  Background = Color3.fromRGB(13, 13, 15),
+  Card = Color3.fromRGB(19, 19, 21),
+  Inset = Color3.fromRGB(10, 10, 12),
+  Stroke = Color3.fromRGB(30, 30, 34),
+  Accent = Color3.fromRGB(255, 56, 56),
+  Text = Color3.fromRGB(240, 240, 242),
+  SubText = Color3.fromRGB(150, 150, 156),
+  Track = Color3.fromRGB(28, 28, 32),
+  SwitchOff = Color3.fromRGB(36, 36, 41),
+  KnobOff = Color3.fromRGB(140, 140, 148),
+  DotOff = Color3.fromRGB(85, 85, 92)
+}
+
+local Toggles = {
+  SilentAim = false,
+  Aimbot = false,
+  ESP = false,
+  Fly = false,
+  GodMode = false,
+  RapidFire = false,
+  NoRecoil = false,
+  TeamCheck = false,
+  WallCheck = true
+}
+
+local Values = {
+  Target = 0,
+  FOV = 100,
+  AimFOV = 100,
+  AimSmooth = 5,
+  Parry = 17,
+  Boost = 2.3,
+  Hitbox = 19,
+  FlySpeed = 50
+}
+
+local Ranges = {
+  Target = {0, 100, 1},
+  FOV = {10, 300, 5},
+  AimFOV = {10, 300, 5},
+  AimSmooth = {1, 20, 1},
+  Parry = {1, 30, 1},
+  Boost = {1, 5, 0.1},
+  Hitbox = {1, 30, 1},
+  FlySpeed = {10, 200, 5}
+}
+
+local Hooks = {}
+local Cash = 0
+local selected = "Hitbox"
+local opened = true
+local tabValue
+local selectedTargetPart = "Head"
+local dropdownOpen = false
+local aimTargetPart = "Head"
+local aimDropdownOpen = false
+local selectedDevice = "None"
+
+local CONFIG_FILE = "BlazdersHub.json"
+local lastSaved
+
+local function loadConfig()
+  if not (isfile and readfile) then
+    return
+  end
+  local ok, raw = pcall(function()
+    if isfile(CONFIG_FILE) then
+      return readfile(CONFIG_FILE)
+    end
+  end)
+  if not ok or type(raw) ~= "string" then
+    return
+  end
+  local decoded, data = pcall(function()
+    return HttpService:JSONDecode(raw)
+  end)
+  if not decoded or type(data) ~= "table" then
+    return
+  end
+  if type(data.Toggles) == "table" then
+    for key in pairs(Toggles) do
+      if type(data.Toggles[key]) == "boolean" then
+        Toggles[key] = data.Toggles[key]
+      end
+    end
+  end
+  if type(data.Values) == "table" then
+    for _, key in ipairs({"FOV", "AimFOV", "AimSmooth", "FlySpeed"}) do
+      local v = data.Values[key]
+      if type(v) == "number" then
+        local r = Ranges[key]
+        Values[key] = math.clamp(v, r[1], r[2])
+      end
+    end
+  end
+  local validParts = {Head = true, HumanoidRootPart = true, UpperTorso = true}
+  if validParts[data.TargetPart] then
+    selectedTargetPart = data.TargetPart
+  end
+  if validParts[data.AimTargetPart] then
+    aimTargetPart = data.AimTargetPart
+  end
+  if data.Device == "None" or data.Device == "PC" or data.Device == "Mobile" then
+    selectedDevice = data.Device
+  end
+end
+
+local function saveConfig()
+  if not writefile then
+    return
+  end
+  local ok, encoded = pcall(function()
+    return HttpService:JSONEncode({
+      Toggles = Toggles,
+      Values = {FOV = Values.FOV, AimFOV = Values.AimFOV, AimSmooth = Values.AimSmooth, FlySpeed = Values.FlySpeed},
+      TargetPart = selectedTargetPart,
+      AimTargetPart = aimTargetPart,
+      Device = selectedDevice
+    })
+  end)
+  if ok and encoded ~= lastSaved then
+    lastSaved = encoded
+    pcall(writefile, CONFIG_FILE, encoded)
+  end
+end
+
+loadConfig()
+
+local function IsTeammate(targetPlayer)
+  if not targetPlayer then
+    return false
+  end
+
+  local localCharacter = LocalPlayer.Character
+  local targetCharacter = targetPlayer.Character
+
+  if localCharacter and targetCharacter then
+    local localMatch = localCharacter:GetAttribute("MatchId")
+    local targetMatch = targetCharacter:GetAttribute("MatchId")
+
+    if localMatch ~= nil or targetMatch ~= nil then
+      local localTeam = localCharacter:GetAttribute("PvPTeam")
+      local targetTeam = targetCharacter:GetAttribute("PvPTeam")
+      return localMatch ~= nil
+        and localMatch == targetMatch
+        and localTeam ~= nil
+        and targetTeam ~= nil
+        and localTeam == targetTeam
+    end
+  end
+
+  local localSide = LocalPlayer:GetAttribute("StageTeamSide")
+  local targetSide = targetPlayer:GetAttribute("StageTeamSide")
+  if typeof(localSide) == "number" and typeof(targetSide) == "number" then
+    return localSide == targetSide
+  end
+
+  if LocalPlayer.Neutral or targetPlayer.Neutral then
+    return false
+  end
+
+  return LocalPlayer.Team ~= nil and targetPlayer.Team == LocalPlayer.Team
+end
+
+local function WallCheck(character, targetPart)
+  targetPart = targetPart or (character and character:FindFirstChild("Head"))
+  if not character or not targetPart or not targetPart:IsDescendantOf(character) then
+    return false
+  end
+
+  local cam = workspace.CurrentCamera
+  if not cam then
+    return false
+  end
+
+  local localCharacter = LocalPlayer.Character
+  local localRoot = localCharacter and localCharacter:FindFirstChild("HumanoidRootPart")
+
+  local filter = { cam }
+  if localCharacter then
+    table.insert(filter, localCharacter)
+  end
+
+  local params = RaycastParams.new()
+  params.FilterDescendantsInstances = filter
+  params.FilterType = Enum.RaycastFilterType.Exclude
+  params.IgnoreWater = true
+
+  local camOrigin = cam.CFrame.Position
+  local camResult = workspace:Raycast(camOrigin, targetPart.Position - camOrigin, params)
+  local camClear = (not camResult) or (camResult.Instance and camResult.Instance:IsDescendantOf(character))
+
+  local rootClear = true
+  if localRoot then
+    local rootOrigin = localRoot.Position
+    local rootResult = workspace:Raycast(rootOrigin, targetPart.Position - rootOrigin, params)
+    rootClear = (not rootResult) or (rootResult.Instance and rootResult.Instance:IsDescendantOf(character))
+  end
+
+  return camClear and rootClear
+end
+
+local function new(class, props, parent)
+  local inst = Instance.new(class)
+  for k, v in pairs(props) do
+    inst[k] = v
+  end
+  inst.Parent = parent
+  return inst
+end
+
+local function round(inst, radius)
+  return new("UICorner", {CornerRadius = UDim.new(0, radius)}, inst)
+end
+
+local function stroke(inst, color, transparency, thickness)
+  return new("UIStroke", {
+    Color = color or Theme.Stroke,
+    Thickness = thickness or 1,
+    Transparency = transparency or 0,
+    ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+  }, inst)
+end
+
+local function label(parent, props)
+  local base = {
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Font = Enum.Font.GothamMedium,
+    TextColor3 = Theme.Text,
+    TextSize = 13,
+    TextXAlignment = Enum.TextXAlignment.Left
+  }
+  for k, v in pairs(props) do
+    base[k] = v
+  end
+  return new("TextLabel", base, parent)
+end
+
+local function card(parent, pos, size, radius)
+  local f = new("Frame", {
+    Position = pos,
+    Size = size,
+    BackgroundColor3 = Theme.Card,
+    BorderSizePixel = 0
+  }, parent)
+  round(f, radius or 10)
+  stroke(f)
+  return f
+end
+
+local function formatValue(key, v)
+  if key == "Boost" then
+    return string.format("%.1fx", v)
+  end
+  if key == "Target" and v <= 0 then
+    return "Off"
+  end
+  if key == "FOV" or key == "AimFOV" then
+    return math.floor(v + 0.5) .. "px"
+  end
+  if key == "AimSmooth" or key == "FlySpeed" then
+    return tostring(math.floor(v + 0.5))
+  end
+  return math.floor(v + 0.5) .. "m"
+end
+
+local function formatNumber(n)
+  local s = tostring(math.floor(n))
+  local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+  return (out:gsub("^,", ""))
+end
+
+local function mask(name)
+  local keep = math.min(3, #name)
+  return string.sub(name, 1, keep) .. string.rep("*", math.max(#name - keep, 3))
+end
+
+local Sliders = {Target = {}, FOV = {}, AimFOV = {}, AimSmooth = {}, Parry = {}, Boost = {}, Hitbox = {}, FlySpeed = {}}
+local ValueLabels = {Target = {}, FOV = {}, AimFOV = {}, AimSmooth = {}, Parry = {}, Boost = {}, Hitbox = {}, FlySpeed = {}}
+
+local function setValue(key, v)
+  Values[key] = v
+  for _, s in ipairs(Sliders[key]) do
+    s.Set(v)
+  end
+  for _, l in ipairs(ValueLabels[key]) do
+    l.Text = formatValue(key, v)
+  end
+  if tabValue and selected == key then
+    tabValue.Text = formatValue(key, v)
+  end
+end
+
+local function makeSlider(parent, pos, size, key)
+  local range = Ranges[key]
+  local min, max, step = range[1], range[2], range[3]
+  local hit = new("Frame", {
+    Position = pos,
+    Size = size,
+    BackgroundTransparency = 1,
+    Active = true
+  }, parent)
+  local track = new("Frame", {
+    Position = UDim2.new(0, 0, 0.5, -2),
+    Size = UDim2.new(1, 0, 0, 4),
+    BackgroundColor3 = Theme.Track,
+    BorderSizePixel = 0
+  }, hit)
+  round(track, 99)
+  local fill = new("Frame", {
+    Size = UDim2.new(0, 0, 1, 0),
+    BackgroundColor3 = Theme.Accent,
+    BorderSizePixel = 0
+  }, track)
+  round(fill, 99)
+  local knob = new("Frame", {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0, 0, 0.5, 0),
+    Size = UDim2.fromOffset(14, 14),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    BorderSizePixel = 0,
+    ZIndex = 3
+  }, track)
+  round(knob, 99)
+
+  local object = {Hit = hit}
+
+  function object.Set(value)
+    local a = math.clamp((value - min) / (max - min), 0, 1)
+    fill.Size = UDim2.new(a, 0, 1, 0)
+    knob.Position = UDim2.new(a, 0, 0.5, 0)
+    local show = not (key == "Target" and value <= 0)
+    knob.Visible = show
+    fill.Visible = show
+  end
+
+  local dragging = false
+
+  local function update(x)
+    local a = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+    local v = min + (max - min) * a
+    v = math.floor(v / step + 0.5) * step
+    setValue(key, v)
+  end
+
+  hit.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+      dragging = true
+      update(input.Position.X)
+    end
+  end)
+
+  UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+      update(input.Position.X)
+    end
+  end)
+
+  UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+      dragging = false
+    end
+  end)
+
+  table.insert(Sliders[key], object)
+  return object
+end
+
+local gui = new("ScreenGui", {
+  Name = "BlazdersHub",
+  ResetOnSpawn = false,
+  IgnoreGuiInset = true,
+  ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+}, parentGui)
+
+local WIDTH = 560
+local HEIGHT = 410
+local HEADER = 53
+
+local root = new("Frame", {
+  Name = "Root",
+  AnchorPoint = Vector2.new(0.5, 0.5),
+  Position = UDim2.new(0.5, 0, 0.56, 0),
+  Size = UDim2.fromOffset(WIDTH, HEIGHT),
+  BackgroundTransparency = 1
+}, gui)
+
+local baseScale = UserInputService.TouchEnabled and 0.8 or 1
+local uiScale = new("UIScale", {Scale = baseScale}, root)
+
+local main = new("Frame", {
+  Name = "Main",
+  Size = UDim2.fromScale(1, 1),
+  BackgroundColor3 = Theme.Background,
+  BorderSizePixel = 0,
+  ClipsDescendants = true
+}, root)
+round(main, 18)
+stroke(main, Theme.Stroke)
+
+local hud = new("TextButton", {
+  AnchorPoint = Vector2.new(0.5, 0),
+  Position = UDim2.new(0.5, 0, 0, 14),
+  Size = UDim2.fromOffset(200, 38),
+  BackgroundColor3 = Color3.fromRGB(8, 8, 9),
+  BorderSizePixel = 0,
+  Text = "",
+  AutoButtonColor = false,
+  ZIndex = 10
+}, gui)
+round(hud, 19)
+
+local hudLogo = new("Frame", {
+  Position = UDim2.fromOffset(5, 5),
+  Size = UDim2.fromOffset(28, 28),
+  BackgroundColor3 = Color3.fromRGB(18, 18, 20),
+  BorderSizePixel = 0,
+  ZIndex = 11
+}, hud)
+round(hudLogo, 99)
+
+local hudLogoImg = new("ImageLabel", {
+  Size = UDim2.fromScale(1, 1),
+  BackgroundTransparency = 1,
+  Image = LOGO,
+  ScaleType = Enum.ScaleType.Crop,
+  ZIndex = 12
+}, hudLogo)
+round(hudLogoImg, 99)
+
+local hudDot = new("Frame", {
+  Position = UDim2.fromOffset(46, 15),
+  Size = UDim2.fromOffset(8, 8),
+  BackgroundColor3 = Theme.Accent,
+  BorderSizePixel = 0,
+  ZIndex = 11
+}, hud)
+round(hudDot, 99)
+
+local hudText = label(hud, {
+  Position = UDim2.fromOffset(62, 0),
+  Size = UDim2.new(1, -70, 1, 0),
+  Text = "",
+  RichText = true,
+  Font = Enum.Font.GothamBold,
+  TextSize = 14,
+  TextTruncate = Enum.TextTruncate.AtEnd,
+  ZIndex = 11
+})
+
+local header = new("Frame", {
+  Size = UDim2.new(1, 0, 0, HEADER),
+  BackgroundTransparency = 1,
+  Active = true
+}, main)
+
+local logo = new("Frame", {
+  Position = UDim2.fromOffset(14, 10),
+  Size = UDim2.fromOffset(34, 34),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0
+}, header)
+round(logo, 99)
+
+local logoImg = new("ImageLabel", {
+  Size = UDim2.fromScale(1, 1),
+  BackgroundTransparency = 1,
+  Image = LOGO,
+  ScaleType = Enum.ScaleType.Crop
+}, logo)
+round(logoImg, 99)
+
+label(header, {
+  Position = UDim2.fromOffset(56, 9),
+  Size = UDim2.fromOffset(200, 20),
+  Text = 'blazders<font color="rgb(255,56,56)">.cc</font>',
+  RichText = true,
+  Font = Enum.Font.GothamBold,
+  TextSize = 17
+})
+
+label(header, {
+  Position = UDim2.fromOffset(56, 29),
+  Size = UDim2.fromOffset(200, 14),
+  Text = "alkedion pvp",
+  TextColor3 = Theme.SubText,
+  TextSize = 11
+})
+
+local statusPill = new("Frame", {
+  Position = UDim2.fromOffset(362, 11),
+  Size = UDim2.fromOffset(147, 31),
+  BackgroundColor3 = Theme.Card,
+  BorderSizePixel = 0
+}, header)
+round(statusPill, 8)
+stroke(statusPill)
+
+local statusDot = new("Frame", {
+  Position = UDim2.fromOffset(12, 11),
+  Size = UDim2.fromOffset(8, 8),
+  BackgroundColor3 = Theme.Accent,
+  BorderSizePixel = 0
+}, statusPill)
+round(statusDot, 99)
+
+local statusText = label(statusPill, {
+  Position = UDim2.fromOffset(30, 0),
+  Size = UDim2.new(1, -36, 1, 0),
+  Text = "Idle",
+  TextColor3 = Theme.SubText
+})
+
+local minimize = new("TextButton", {
+  Position = UDim2.fromOffset(517, 11),
+  Size = UDim2.fromOffset(30, 31),
+  BackgroundColor3 = Theme.Card,
+  BorderSizePixel = 0,
+  Text = "-",
+  Font = Enum.Font.GothamBold,
+  TextSize = 14,
+  TextColor3 = Theme.SubText,
+  AutoButtonColor = false
+}, header)
+round(minimize, 8)
+
+local separator = new("Frame", {
+  Position = UDim2.fromOffset(0, HEADER),
+  Size = UDim2.new(1, 0, 0, 1),
+  BackgroundColor3 = Theme.Stroke,
+  BorderSizePixel = 0
+}, main)
+
+local body = new("Frame", {
+  Position = UDim2.fromOffset(0, HEADER + 1),
+  Size = UDim2.new(1, 0, 1, -(HEADER + 1)),
+  BackgroundTransparency = 1
+}, main)
+
+local function refreshStatus()
+  local state = (Toggles.SilentAim or Toggles.Aimbot) and "Active" or "Idle"
+  statusText.Text = state
+  hudText.Text = string.format(
+    '$%s <font color="rgb(150,150,156)">•</font> <font color="rgb(255,56,56)">%s</font>',
+    formatNumber(Cash),
+    state
+  )
+end
+
+local pointsCard = card(body, UDim2.fromOffset(12, 7), UDim2.fromOffset(242, 108), 10)
+
+local avatarHolder = new("Frame", {
+  Position = UDim2.fromOffset(10, 8),
+  Size = UDim2.fromOffset(32, 32),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0
+}, pointsCard)
+round(avatarHolder, 99)
+stroke(avatarHolder, Theme.Accent, 0.1)
+
+local avatarImg = new("ImageLabel", {
+  Size = UDim2.fromScale(1, 1),
+  BackgroundTransparency = 1,
+  Image = AVATAR,
+  ScaleType = Enum.ScaleType.Crop
+}, avatarHolder)
+round(avatarImg, 99)
+
+label(pointsCard, {
+  Position = UDim2.fromOffset(50, 8),
+  Size = UDim2.fromOffset(96, 16),
+  Text = mask(LocalPlayer.DisplayName),
+  Font = Enum.Font.GothamBold,
+  TextSize = 12,
+  TextTruncate = Enum.TextTruncate.AtEnd
+})
+
+label(pointsCard, {
+  Position = UDim2.fromOffset(50, 24),
+  Size = UDim2.fromOffset(96, 14),
+  Text = "@" .. mask(LocalPlayer.Name),
+  TextColor3 = Theme.SubText,
+  TextSize = 9,
+  TextTruncate = Enum.TextTruncate.AtEnd
+})
+
+local rate = new("Frame", {
+  Position = UDim2.fromOffset(151, 10),
+  Size = UDim2.fromOffset(81, 20),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0
+}, pointsCard)
+round(rate, 6)
+
+label(rate, {
+  Size = UDim2.fromScale(1, 1),
+  Text = "CASH",
+  Font = Enum.Font.GothamBold,
+  TextSize = 11,
+  TextColor3 = Theme.Accent,
+  TextXAlignment = Enum.TextXAlignment.Center
+})
+
+local cashLabel = label(pointsCard, {
+  Position = UDim2.fromOffset(13, 40),
+  Size = UDim2.fromOffset(216, 26),
+  Text = "$0",
+  Font = Enum.Font.GothamBlack,
+  TextSize = 22,
+  TextTruncate = Enum.TextTruncate.AtEnd
+})
+
+local stats = new("Frame", {
+  Position = UDim2.fromOffset(8, 69),
+  Size = UDim2.fromOffset(225, 33),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0
+}, pointsCard)
+round(stats, 7)
+
+local statLabels = {}
+local statData = {{"Kills", "0"}, {"Coins", "0"}, {"Event", "0"}}
+
+for i, item in ipairs(statData) do
+  local x = 8 + (i - 1) * 74
+  label(stats, {
+    Position = UDim2.fromOffset(x, 3),
+    Size = UDim2.fromOffset(70, 11),
+    Text = item[1],
+    TextColor3 = Theme.SubText,
+    TextSize = 8
+  })
+  statLabels[item[1]] = label(stats, {
+    Position = UDim2.fromOffset(x, 15),
+    Size = UDim2.fromOffset(70, 14),
+    Text = item[2],
+    Font = Enum.Font.GothamBold,
+    TextSize = 12,
+    TextTruncate = Enum.TextTruncate.AtEnd
+  })
+end
+
+local DEV_Y = 184
+local DEV_ITEM_H = 22
+local DEV_DROP_H = 3 * DEV_ITEM_H
+local MISC_H = DEV_Y + 22 + 12
+local combat = card(body, UDim2.fromOffset(12, 121), UDim2.fromOffset(242, MISC_H), 10)
+combat.ClipsDescendants = true
+
+label(combat, {
+  Position = UDim2.fromOffset(13, 6),
+  Size = UDim2.fromOffset(100, 20),
+  Text = "Misc",
+  TextColor3 = Theme.SubText,
+  TextSize = 13
+})
+
+local function makeSharedToggle(parent, yPos, labelText, toggleKey)
+  label(parent, {
+    Position = UDim2.fromOffset(13, yPos),
+    Size = UDim2.fromOffset(120, 20),
+    Text = labelText,
+    TextSize = 13
+  })
+  local sw = new("TextButton", {
+    Position = UDim2.fromOffset(188, yPos),
+    Size = UDim2.fromOffset(41, 20),
+    BackgroundColor3 = Toggles[toggleKey] and Theme.Accent or Theme.SwitchOff,
+    BorderSizePixel = 0,
+    Text = "",
+    AutoButtonColor = false
+  }, parent)
+  round(sw, 99)
+  local kb = new("Frame", {
+    AnchorPoint = Vector2.new(0, 0.5),
+    Position = Toggles[toggleKey] and UDim2.new(0, 25, 0.5, 0) or UDim2.new(0, 4, 0.5, 0),
+    Size = UDim2.fromOffset(12, 12),
+    BackgroundColor3 = Toggles[toggleKey] and Color3.new(1, 1, 1) or Theme.KnobOff,
+    BorderSizePixel = 0
+  }, sw)
+  round(kb, 99)
+  sw.MouseButton1Click:Connect(function()
+    Toggles[toggleKey] = not Toggles[toggleKey]
+    local on = Toggles[toggleKey]
+    local info = TweenInfo.new(0.15)
+    TweenService:Create(sw, info, {BackgroundColor3 = on and Theme.Accent or Theme.SwitchOff}):Play()
+    TweenService:Create(kb, info, {
+      Position = on and UDim2.new(0, 25, 0.5, 0) or UDim2.new(0, 4, 0.5, 0),
+      BackgroundColor3 = on and Color3.new(1, 1, 1) or Theme.KnobOff
+    }):Play()
+  end)
+end
+
+makeSharedToggle(combat, 34, "Team Check", "TeamCheck")
+makeSharedToggle(combat, 58, "Wall Check", "WallCheck")
+makeSharedToggle(combat, 82, "ESP", "ESP")
+makeSharedToggle(combat, 106, "God Mode", "GodMode")
+makeSharedToggle(combat, 130, "Rapid Fire", "RapidFire")
+makeSharedToggle(combat, 154, "No Recoil", "NoRecoil")
+
+local deviceNames = {"None", "PC", "Mobile"}
+local deviceValues = {None = nil, PC = "Computer", Mobile = "Touch"}
+local currentDevice = deviceValues[selectedDevice]
+local deviceOpen = false
+local deviceRemote = nil
+local MISC_EASE = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local MISC_HOVER = TweenInfo.new(0.12)
+
+label(combat, {
+  Position = UDim2.fromOffset(13, DEV_Y),
+  Size = UDim2.fromOffset(86, 22),
+  Text = "Device Spoofer",
+  TextColor3 = Theme.SubText,
+  TextSize = 11
+})
+
+local deviceBtn = new("TextButton", {
+  Position = UDim2.fromOffset(100, DEV_Y),
+  Size = UDim2.fromOffset(130, 22),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0,
+  Text = selectedDevice,
+  Font = Enum.Font.GothamBold,
+  TextSize = 11,
+  TextColor3 = Theme.Text,
+  AutoButtonColor = false
+}, combat)
+round(deviceBtn, 6)
+local deviceStroke = stroke(deviceBtn)
+
+local deviceArrow = label(deviceBtn, {
+  AnchorPoint = Vector2.new(0.5, 0.5),
+  Position = UDim2.new(1, -14, 0.5, 0),
+  Size = UDim2.fromOffset(14, 14),
+  Text = "▼",
+  TextSize = 8,
+  TextColor3 = Theme.SubText,
+  TextXAlignment = Enum.TextXAlignment.Center
+})
+
+local deviceList = new("Frame", {
+  AnchorPoint = Vector2.new(0, 1),
+  Position = UDim2.fromOffset(100, DEV_Y - 4),
+  Size = UDim2.fromOffset(130, 0),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0,
+  Visible = false,
+  ClipsDescendants = true,
+  ZIndex = 5
+}, combat)
+round(deviceList, 6)
+stroke(deviceList)
+
+local deviceOptionButtons = {}
+local updateDeviceSize
+
+local function refreshDeviceOptions()
+  for name, btn in pairs(deviceOptionButtons) do
+    local picked = name == selectedDevice
+    btn.TextColor3 = picked and Theme.Accent or Theme.Text
+    btn.Font = picked and Enum.Font.GothamBold or Enum.Font.GothamMedium
+  end
+end
+
+for i, name in ipairs(deviceNames) do
+  local opt = new("TextButton", {
+    Position = UDim2.fromOffset(0, (i - 1) * DEV_ITEM_H),
+    Size = UDim2.new(1, 0, 0, DEV_ITEM_H),
+    BackgroundColor3 = Theme.Card,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Text = name,
+    Font = Enum.Font.GothamMedium,
+    TextSize = 11,
+    TextColor3 = Theme.Text,
+    AutoButtonColor = false,
+    ZIndex = 6
+  }, deviceList)
+  deviceOptionButtons[name] = opt
+
+  opt.MouseEnter:Connect(function()
+    TweenService:Create(opt, MISC_HOVER, {BackgroundTransparency = 0}):Play()
+  end)
+  opt.MouseLeave:Connect(function()
+    TweenService:Create(opt, MISC_HOVER, {BackgroundTransparency = 1}):Play()
+  end)
+  opt.MouseButton1Click:Connect(function()
+    selectedDevice = name
+    deviceBtn.Text = name
+    currentDevice = deviceValues[name]
+    deviceOpen = false
+    refreshDeviceOptions()
+    updateDeviceSize()
+    if currentDevice and deviceRemote then
+      pcall(function()
+        deviceRemote:FireServer(currentDevice)
+      end)
+      print("[spoof] Device = " .. currentDevice)
+    end
+  end)
+end
+refreshDeviceOptions()
+
+updateDeviceSize = function()
+  local open = deviceOpen
+  TweenService:Create(deviceArrow, MISC_EASE, {Rotation = open and 180 or 0}):Play()
+  TweenService:Create(deviceStroke, MISC_EASE, {Color = open and Theme.Accent or Theme.Stroke}):Play()
+
+  if open then
+    deviceList.Visible = true
+  end
+  local listTween = TweenService:Create(deviceList, MISC_EASE, {
+    Size = UDim2.fromOffset(130, open and DEV_DROP_H or 0)
+  })
+  listTween:Play()
+  if not open then
+    listTween.Completed:Connect(function()
+      if not deviceOpen then
+        deviceList.Visible = false
+      end
+    end)
+  end
+end
+
+deviceBtn.MouseButton1Click:Connect(function()
+  deviceOpen = not deviceOpen
+  updateDeviceSize()
+end)
+
+task.spawn(function()
+  local remote = ReplicatedStorage:WaitForChild("PVP_DeviceReport", 15)
+  if not remote then
+    return
+  end
+  deviceRemote = remote
+
+  local old
+  old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    if currentDevice and self == remote and getnamecallmethod() == "FireServer" and not checkcaller() then
+      return old(self, currentDevice)
+    end
+    return old(self, ...)
+  end))
+
+  if currentDevice then
+    remote:FireServer(currentDevice)
+  end
+end)
+
+local rightStack = new("ScrollingFrame", {
+  Position = UDim2.fromOffset(262, 6),
+  Size = UDim2.fromOffset(288, 320),
+  BackgroundTransparency = 1,
+  BorderSizePixel = 0,
+  ScrollBarThickness = 0,
+  ScrollingDirection = Enum.ScrollingDirection.Y,
+  CanvasSize = UDim2.fromOffset(0, 0),
+  AutomaticCanvasSize = Enum.AutomaticSize.Y
+}, body)
+
+new("UIPadding", {
+  PaddingLeft = UDim.new(0, 2),
+  PaddingRight = UDim.new(0, 2),
+  PaddingTop = UDim.new(0, 2),
+  PaddingBottom = UDim.new(0, 2)
+}, rightStack)
+
+local rightLayout = new("UIListLayout", {
+  Padding = UDim.new(0, 6),
+  SortOrder = Enum.SortOrder.LayoutOrder
+}, rightStack)
+
+local silentRow = card(rightStack, UDim2.new(), UDim2.fromOffset(284, 44), 10)
+silentRow.LayoutOrder = 1
+silentRow.ClipsDescendants = true
+
+local silentDot = new("Frame", {
+  Position = UDim2.fromOffset(13, 18),
+  Size = UDim2.fromOffset(7, 7),
+  BackgroundColor3 = Theme.DotOff,
+  BorderSizePixel = 0
+}, silentRow)
+round(silentDot, 99)
+
+label(silentRow, {
+  Position = UDim2.fromOffset(30, 0),
+  Size = UDim2.new(1, -100, 0, 44),
+  Text = "Silent Aim",
+  Font = Enum.Font.GothamBold,
+  TextSize = 13
+})
+
+local silentSwitch = new("TextButton", {
+  Position = UDim2.new(1, -53, 0, 11),
+  Size = UDim2.fromOffset(41, 22),
+  BackgroundColor3 = Theme.SwitchOff,
+  BorderSizePixel = 0,
+  Text = "",
+  AutoButtonColor = false
+}, silentRow)
+round(silentSwitch, 99)
+
+local silentKnob = new("Frame", {
+  AnchorPoint = Vector2.new(0, 0.5),
+  Position = UDim2.new(0, 4, 0.5, 0),
+  Size = UDim2.fromOffset(14, 14),
+  BackgroundColor3 = Theme.KnobOff,
+  BorderSizePixel = 0
+}, silentSwitch)
+round(silentKnob, 99)
+
+new("Frame", {
+  Position = UDim2.fromOffset(12, 44),
+  Size = UDim2.new(1, -24, 0, 1),
+  BackgroundColor3 = Theme.Stroke,
+  BorderSizePixel = 0
+}, silentRow)
+
+label(silentRow, {
+  Position = UDim2.fromOffset(14, 48),
+  Size = UDim2.fromOffset(45, 22),
+  Text = "FOV",
+  TextColor3 = Theme.SubText,
+  TextSize = 11
+})
+
+makeSlider(silentRow, UDim2.fromOffset(54, 49), UDim2.fromOffset(172, 20), "FOV")
+
+local fovValLabel = label(silentRow, {
+  Position = UDim2.fromOffset(230, 48),
+  Size = UDim2.fromOffset(42, 22),
+  Text = "",
+  Font = Enum.Font.GothamBold,
+  TextSize = 11,
+  TextColor3 = Theme.Accent,
+  TextXAlignment = Enum.TextXAlignment.Right
+})
+table.insert(ValueLabels.FOV, fovValLabel)
+
+label(silentRow, {
+  Position = UDim2.fromOffset(14, 76),
+  Size = UDim2.fromOffset(60, 22),
+  Text = "Target",
+  TextColor3 = Theme.SubText,
+  TextSize = 11
+})
+
+local parts = {"Head", "HumanoidRootPart", "UpperTorso"}
+local ITEM_H = 22
+local DROP_H = #parts * ITEM_H
+local TARGET_Y = 76
+local LIST_Y = TARGET_Y + 22 + 4
+local SILENT_CLOSED_H = TARGET_Y + 22 + 10
+local SILENT_OPEN_H = LIST_Y + DROP_H + 10
+local DROP_EASE = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local HOVER_EASE = TweenInfo.new(0.12)
+
+local dropdownBtn = new("TextButton", {
+  Position = UDim2.fromOffset(80, TARGET_Y),
+  Size = UDim2.fromOffset(190, 22),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0,
+  Text = selectedTargetPart,
+  Font = Enum.Font.GothamBold,
+  TextSize = 11,
+  TextColor3 = Theme.Text,
+  AutoButtonColor = false
+}, silentRow)
+round(dropdownBtn, 6)
+local dropdownStroke = stroke(dropdownBtn)
+
+local dropArrow = label(dropdownBtn, {
+  AnchorPoint = Vector2.new(0.5, 0.5),
+  Position = UDim2.new(1, -14, 0.5, 0),
+  Size = UDim2.fromOffset(14, 14),
+  Text = "▼",
+  TextSize = 8,
+  TextColor3 = Theme.SubText,
+  TextXAlignment = Enum.TextXAlignment.Center
+})
+
+local dropdownList = new("Frame", {
+  Position = UDim2.fromOffset(80, LIST_Y),
+  Size = UDim2.fromOffset(190, 0),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0,
+  Visible = false,
+  ClipsDescendants = true,
+  ZIndex = 5
+}, silentRow)
+round(dropdownList, 6)
+stroke(dropdownList)
+
+local optionButtons = {}
+local updateSilentRowSize
+
+local function refreshOptions()
+  for name, btn in pairs(optionButtons) do
+    local picked = name == selectedTargetPart
+    btn.TextColor3 = picked and Theme.Accent or Theme.Text
+    btn.Font = picked and Enum.Font.GothamBold or Enum.Font.GothamMedium
+  end
+end
+
+for i, partName in ipairs(parts) do
+  local opt = new("TextButton", {
+    Position = UDim2.fromOffset(0, (i - 1) * ITEM_H),
+    Size = UDim2.new(1, 0, 0, ITEM_H),
+    BackgroundColor3 = Theme.Card,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Text = partName,
+    Font = Enum.Font.GothamMedium,
+    TextSize = 11,
+    TextColor3 = Theme.Text,
+    AutoButtonColor = false,
+    ZIndex = 6
+  }, dropdownList)
+  optionButtons[partName] = opt
+
+  opt.MouseEnter:Connect(function()
+    TweenService:Create(opt, HOVER_EASE, {BackgroundTransparency = 0}):Play()
+  end)
+  opt.MouseLeave:Connect(function()
+    TweenService:Create(opt, HOVER_EASE, {BackgroundTransparency = 1}):Play()
+  end)
+  opt.MouseButton1Click:Connect(function()
+    selectedTargetPart = partName
+    dropdownBtn.Text = partName
+    dropdownOpen = false
+    refreshOptions()
+    updateSilentRowSize()
+  end)
+end
+refreshOptions()
+
+updateSilentRowSize = function()
+  local on = Toggles.SilentAim
+  local open = on and dropdownOpen
+  local height = 44
+  if on then
+    height = open and SILENT_OPEN_H or SILENT_CLOSED_H
+  end
+
+  TweenService:Create(silentRow, DROP_EASE, {Size = UDim2.fromOffset(284, height)}):Play()
+  TweenService:Create(dropArrow, DROP_EASE, {Rotation = open and 180 or 0}):Play()
+  TweenService:Create(dropdownStroke, DROP_EASE, {Color = open and Theme.Accent or Theme.Stroke}):Play()
+
+  if open then
+    dropdownList.Visible = true
+  end
+  local listTween = TweenService:Create(dropdownList, DROP_EASE, {
+    Size = UDim2.fromOffset(190, open and DROP_H or 0)
+  })
+  listTween:Play()
+  if not open then
+    listTween.Completed:Connect(function()
+      if not dropdownOpen then
+        dropdownList.Visible = false
+      end
+    end)
+  end
+end
+
+dropdownBtn.MouseButton1Click:Connect(function()
+  if not Toggles.SilentAim then return end
+  dropdownOpen = not dropdownOpen
+  updateSilentRowSize()
+end)
+
+silentSwitch.MouseButton1Click:Connect(function()
+  Toggles.SilentAim = not Toggles.SilentAim
+  local on = Toggles.SilentAim
+  if not on then
+    dropdownOpen = false
+  end
+  silentSwitch.BackgroundColor3 = on and Theme.Accent or Theme.SwitchOff
+  silentKnob.Position = on and UDim2.new(0, 23, 0.5, 0) or UDim2.new(0, 4, 0.5, 0)
+  silentKnob.BackgroundColor3 = on and Color3.new(1, 1, 1) or Theme.KnobOff
+  silentDot.BackgroundColor3 = on and Theme.Accent or Theme.DotOff
+  updateSilentRowSize()
+  refreshStatus()
+  if Hooks.SilentAim then
+    Hooks.SilentAim(on)
+  end
+end)
+
+local aimRow = card(rightStack, UDim2.new(), UDim2.fromOffset(284, 44), 10)
+aimRow.LayoutOrder = 2
+aimRow.ClipsDescendants = true
+
+local aimDot = new("Frame", {
+  Position = UDim2.fromOffset(13, 18),
+  Size = UDim2.fromOffset(7, 7),
+  BackgroundColor3 = Theme.DotOff,
+  BorderSizePixel = 0
+}, aimRow)
+round(aimDot, 99)
+
+label(aimRow, {
+  Position = UDim2.fromOffset(30, 0),
+  Size = UDim2.new(1, -100, 0, 44),
+  Text = "Aimbot",
+  Font = Enum.Font.GothamBold,
+  TextSize = 13
+})
+
+local aimSwitch = new("TextButton", {
+  Position = UDim2.new(1, -53, 0, 11),
+  Size = UDim2.fromOffset(41, 22),
+  BackgroundColor3 = Theme.SwitchOff,
+  BorderSizePixel = 0,
+  Text = "",
+  AutoButtonColor = false
+}, aimRow)
+round(aimSwitch, 99)
+
+local aimKnob = new("Frame", {
+  AnchorPoint = Vector2.new(0, 0.5),
+  Position = UDim2.new(0, 4, 0.5, 0),
+  Size = UDim2.fromOffset(14, 14),
+  BackgroundColor3 = Theme.KnobOff,
+  BorderSizePixel = 0
+}, aimSwitch)
+round(aimKnob, 99)
+
+new("Frame", {
+  Position = UDim2.fromOffset(12, 44),
+  Size = UDim2.new(1, -24, 0, 1),
+  BackgroundColor3 = Theme.Stroke,
+  BorderSizePixel = 0
+}, aimRow)
+
+label(aimRow, {
+  Position = UDim2.fromOffset(14, 48),
+  Size = UDim2.fromOffset(45, 22),
+  Text = "FOV",
+  TextColor3 = Theme.SubText,
+  TextSize = 11
+})
+
+makeSlider(aimRow, UDim2.fromOffset(54, 49), UDim2.fromOffset(172, 20), "AimFOV")
+
+local aimFovValLabel = label(aimRow, {
+  Position = UDim2.fromOffset(230, 48),
+  Size = UDim2.fromOffset(42, 22),
+  Text = "",
+  Font = Enum.Font.GothamBold,
+  TextSize = 11,
+  TextColor3 = Theme.Accent,
+  TextXAlignment = Enum.TextXAlignment.Right
+})
+table.insert(ValueLabels.AimFOV, aimFovValLabel)
+
+label(aimRow, {
+  Position = UDim2.fromOffset(14, 76),
+  Size = UDim2.fromOffset(45, 22),
+  Text = "Smooth",
+  TextColor3 = Theme.SubText,
+  TextSize = 11
+})
+
+makeSlider(aimRow, UDim2.fromOffset(60, 77), UDim2.fromOffset(166, 20), "AimSmooth")
+
+local aimSmoothValLabel = label(aimRow, {
+  Position = UDim2.fromOffset(230, 76),
+  Size = UDim2.fromOffset(42, 22),
+  Text = "",
+  Font = Enum.Font.GothamBold,
+  TextSize = 11,
+  TextColor3 = Theme.Accent,
+  TextXAlignment = Enum.TextXAlignment.Right
+})
+table.insert(ValueLabels.AimSmooth, aimSmoothValLabel)
+
+label(aimRow, {
+  Position = UDim2.fromOffset(14, 104),
+  Size = UDim2.fromOffset(60, 22),
+  Text = "Target",
+  TextColor3 = Theme.SubText,
+  TextSize = 11
+})
+
+local AIM_TARGET_Y = 104
+local AIM_LIST_Y = AIM_TARGET_Y + 22 + 4
+local AIM_CLOSED_H = AIM_TARGET_Y + 22 + 10
+local AIM_OPEN_H = AIM_LIST_Y + DROP_H + 10
+
+local aimDropdownBtn = new("TextButton", {
+  Position = UDim2.fromOffset(80, AIM_TARGET_Y),
+  Size = UDim2.fromOffset(190, 22),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0,
+  Text = aimTargetPart,
+  Font = Enum.Font.GothamBold,
+  TextSize = 11,
+  TextColor3 = Theme.Text,
+  AutoButtonColor = false
+}, aimRow)
+round(aimDropdownBtn, 6)
+local aimDropdownStroke = stroke(aimDropdownBtn)
+
+local aimDropArrow = label(aimDropdownBtn, {
+  AnchorPoint = Vector2.new(0.5, 0.5),
+  Position = UDim2.new(1, -14, 0.5, 0),
+  Size = UDim2.fromOffset(14, 14),
+  Text = "▼",
+  TextSize = 8,
+  TextColor3 = Theme.SubText,
+  TextXAlignment = Enum.TextXAlignment.Center
+})
+
+local aimDropdownList = new("Frame", {
+  Position = UDim2.fromOffset(80, AIM_LIST_Y),
+  Size = UDim2.fromOffset(190, 0),
+  BackgroundColor3 = Theme.Inset,
+  BorderSizePixel = 0,
+  Visible = false,
+  ClipsDescendants = true,
+  ZIndex = 5
+}, aimRow)
+round(aimDropdownList, 6)
+stroke(aimDropdownList)
+
+local aimOptionButtons = {}
+local updateAimRowSize
+
+local function refreshAimOptions()
+  for name, btn in pairs(aimOptionButtons) do
+    local picked = name == aimTargetPart
+    btn.TextColor3 = picked and Theme.Accent or Theme.Text
+    btn.Font = picked and Enum.Font.GothamBold or Enum.Font.GothamMedium
+  end
+end
+
+for i, partName in ipairs(parts) do
+  local opt = new("TextButton", {
+    Position = UDim2.fromOffset(0, (i - 1) * ITEM_H),
+    Size = UDim2.new(1, 0, 0, ITEM_H),
+    BackgroundColor3 = Theme.Card,
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Text = partName,
+    Font = Enum.Font.GothamMedium,
+    TextSize = 11,
+    TextColor3 = Theme.Text,
+    AutoButtonColor = false,
+    ZIndex = 6
+  }, aimDropdownList)
+  aimOptionButtons[partName] = opt
+
+  opt.MouseEnter:Connect(function()
+    TweenService:Create(opt, HOVER_EASE, {BackgroundTransparency = 0}):Play()
+  end)
+  opt.MouseLeave:Connect(function()
+    TweenService:Create(opt, HOVER_EASE, {BackgroundTransparency = 1}):Play()
+  end)
+  opt.MouseButton1Click:Connect(function()
+    aimTargetPart = partName
+    aimDropdownBtn.Text = partName
+    aimDropdownOpen = false
+    refreshAimOptions()
+    updateAimRowSize()
+  end)
+end
+refreshAimOptions()
+
+updateAimRowSize = function()
+  local on = Toggles.Aimbot
+  local open = on and aimDropdownOpen
+  local height = 44
+  if on then
+    height = open and AIM_OPEN_H or AIM_CLOSED_H
+  end
+
+  TweenService:Create(aimRow, DROP_EASE, {Size = UDim2.fromOffset(284, height)}):Play()
+  TweenService:Create(aimDropArrow, DROP_EASE, {Rotation = open and 180 or 0}):Play()
+  TweenService:Create(aimDropdownStroke, DROP_EASE, {Color = open and Theme.Accent or Theme.Stroke}):Play()
+
+  if open then
+    aimDropdownList.Visible = true
+  end
+  local listTween = TweenService:Create(aimDropdownList, DROP_EASE, {
+    Size = UDim2.fromOffset(190, open and DROP_H or 0)
+  })
+  listTween:Play()
+  if not open then
+    listTween.Completed:Connect(function()
+      if not aimDropdownOpen then
+        aimDropdownList.Visible = false
+      end
+    end)
+  end
+end
+
+aimDropdownBtn.MouseButton1Click:Connect(function()
+  if not Toggles.Aimbot then return end
+  aimDropdownOpen = not aimDropdownOpen
+  updateAimRowSize()
+end)
+
+aimSwitch.MouseButton1Click:Connect(function()
+  Toggles.Aimbot = not Toggles.Aimbot
+  local on = Toggles.Aimbot
+  if not on then
+    aimDropdownOpen = false
+  end
+  aimSwitch.BackgroundColor3 = on and Theme.Accent or Theme.SwitchOff
+  aimKnob.Position = on and UDim2.new(0, 23, 0.5, 0) or UDim2.new(0, 4, 0.5, 0)
+  aimKnob.BackgroundColor3 = on and Color3.new(1, 1, 1) or Theme.KnobOff
+  aimDot.BackgroundColor3 = on and Theme.Accent or Theme.DotOff
+  updateAimRowSize()
+  refreshStatus()
+  if Hooks.Aimbot then
+    Hooks.Aimbot(on)
+  end
+end)
+
+if Toggles.SilentAim then
+  silentSwitch.BackgroundColor3 = Theme.Accent
+  silentKnob.Position = UDim2.new(0, 23, 0.5, 0)
+  silentKnob.BackgroundColor3 = Color3.new(1, 1, 1)
+  silentDot.BackgroundColor3 = Theme.Accent
+  updateSilentRowSize()
+end
+
+if Toggles.Aimbot then
+  aimSwitch.BackgroundColor3 = Theme.Accent
+  aimKnob.Position = UDim2.new(0, 23, 0.5, 0)
+  aimKnob.BackgroundColor3 = Color3.new(1, 1, 1)
+  aimDot.BackgroundColor3 = Theme.Accent
+  updateAimRowSize()
+end
+
+local flyRow = card(rightStack, UDim2.new(), UDim2.fromOffset(284, 44), 10)
+flyRow.LayoutOrder = 3
+flyRow.ClipsDescendants = true
+
+local flyDot = new("Frame", {
+  Position = UDim2.fromOffset(13, 18),
+  Size = UDim2.fromOffset(7, 7),
+  BackgroundColor3 = Theme.DotOff,
+  BorderSizePixel = 0
+}, flyRow)
+round(flyDot, 99)
+
+label(flyRow, {
+  Position = UDim2.fromOffset(30, 0),
+  Size = UDim2.new(1, -100, 0, 44),
+  Text = "Fly",
+  Font = Enum.Font.GothamBold,
+  TextSize = 13
+})
+
+local flySwitch = new("TextButton", {
+  Position = UDim2.new(1, -53, 0, 11),
+  Size = UDim2.fromOffset(41, 22),
+  BackgroundColor3 = Theme.SwitchOff,
+  BorderSizePixel = 0,
+  Text = "",
+  AutoButtonColor = false
+}, flyRow)
+round(flySwitch, 99)
+
+local flyKnob = new("Frame", {
+  AnchorPoint = Vector2.new(0, 0.5),
+  Position = UDim2.new(0, 4, 0.5, 0),
+  Size = UDim2.fromOffset(14, 14),
+  BackgroundColor3 = Theme.KnobOff,
+  BorderSizePixel = 0
+}, flySwitch)
+round(flyKnob, 99)
+
+new("Frame", {
+  Position = UDim2.fromOffset(12, 44),
+  Size = UDim2.new(1, -24, 0, 1),
+  BackgroundColor3 = Theme.Stroke,
+  BorderSizePixel = 0
+}, flyRow)
+
+label(flyRow, {
+  Position = UDim2.fromOffset(14, 48),
+  Size = UDim2.fromOffset(45, 22),
+  Text = "Speed",
+  TextColor3 = Theme.SubText,
+  TextSize = 11
+})
+
+makeSlider(flyRow, UDim2.fromOffset(60, 49), UDim2.fromOffset(166, 20), "FlySpeed")
+
+local flySpeedValLabel = label(flyRow, {
+  Position = UDim2.fromOffset(230, 48),
+  Size = UDim2.fromOffset(42, 22),
+  Text = "",
+  Font = Enum.Font.GothamBold,
+  TextSize = 11,
+  TextColor3 = Theme.Accent,
+  TextXAlignment = Enum.TextXAlignment.Right
+})
+table.insert(ValueLabels.FlySpeed, flySpeedValLabel)
+
+local FLY_OPEN_H = 80
+
+local function updateFlyRowSize()
+  TweenService:Create(flyRow, DROP_EASE, {
+    Size = UDim2.fromOffset(284, Toggles.Fly and FLY_OPEN_H or 44)
+  }):Play()
+end
+
+flySwitch.MouseButton1Click:Connect(function()
+  Toggles.Fly = not Toggles.Fly
+  local on = Toggles.Fly
+  flySwitch.BackgroundColor3 = on and Theme.Accent or Theme.SwitchOff
+  flyKnob.Position = on and UDim2.new(0, 23, 0.5, 0) or UDim2.new(0, 4, 0.5, 0)
+  flyKnob.BackgroundColor3 = on and Color3.new(1, 1, 1) or Theme.KnobOff
+  flyDot.BackgroundColor3 = on and Theme.Accent or Theme.DotOff
+  updateFlyRowSize()
+end)
+
+if Toggles.Fly then
+  flySwitch.BackgroundColor3 = Theme.Accent
+  flyKnob.Position = UDim2.new(0, 23, 0.5, 0)
+  flyKnob.BackgroundColor3 = Color3.new(1, 1, 1)
+  flyDot.BackgroundColor3 = Theme.Accent
+  updateFlyRowSize()
+end
+
+local function setOpen(state)
+  opened = state
+  if state then
+    root.Visible = true
+    uiScale.Scale = baseScale * 0.92
+    TweenService:Create(uiScale, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+      Scale = baseScale
+    }):Play()
+  else
+    local t = TweenService:Create(uiScale, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+      Scale = baseScale * 0.92
+    })
+    t:Play()
+    t.Completed:Connect(function()
+      if not opened then
+        root.Visible = false
+      end
+    end)
+  end
+end
+
+local minimized = false
+
+minimize.MouseButton1Click:Connect(function()
+  minimized = not minimized
+  body.Visible = not minimized
+  separator.Visible = not minimized
+  root.Size = minimized and UDim2.fromOffset(WIDTH, HEADER) or UDim2.fromOffset(WIDTH, HEIGHT)
+end)
+
+hud.MouseButton1Click:Connect(function()
+  setOpen(not opened)
+end)
+
+local dragging = false
+local dragStart
+local startPos
+
+header.InputBegan:Connect(function(input)
+  if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    dragging = true
+    dragStart = input.Position
+    startPos = root.Position
+    input.Changed:Connect(function()
+      if input.UserInputState == Enum.UserInputState.End then
+        dragging = false
+      end
+    end)
+  end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+  if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+    local delta = (input.Position - dragStart) / uiScale.Scale
+    root.Position = UDim2.new(
+      startPos.X.Scale,
+      startPos.X.Offset + delta.X,
+      startPos.Y.Scale,
+      startPos.Y.Offset + delta.Y
+    )
+  end
+end)
+
+UserInputService.InputBegan:Connect(function(input, processed)
+  if not processed and input.KeyCode == Enum.KeyCode.RightShift then
+    setOpen(not opened)
+  end
+end)
+
+local function track(path, onChange)
+  task.spawn(function()
+    local inst = LocalPlayer
+    for _, name in ipairs(path) do
+      inst = inst and inst:WaitForChild(name, 30)
+    end
+    if not inst then
+      return
+    end
+    onChange(inst.Value)
+    inst:GetPropertyChangedSignal("Value"):Connect(function()
+      onChange(inst.Value)
+    end)
+  end)
+end
+
+track({"PlayerData", "Cash"}, function(v)
+  Cash = v
+  cashLabel.Text = "$" .. formatNumber(v)
+  refreshStatus()
+end)
+
+track({"leaderstats", "Kills"}, function(v)
+  statLabels.Kills.Text = formatNumber(v)
+end)
+
+track({"PlayerData", "Coin"}, function(v)
+  statLabels.Coins.Text = formatNumber(v)
+end)
+
+track({"PlayerData", "EventCoin"}, function(v)
+  statLabels.Event.Text = formatNumber(v)
+end)
+
+for key, v in pairs(Values) do
+  setValue(key, v)
+end
+
+refreshStatus()
+
+task.spawn(function()
+  while gui.Parent do
+    saveConfig()
+    task.wait(1.5)
+  end
+end)
+
+task.spawn(function()
+  local sound = Instance.new("Sound")
+  sound.SoundId = "rbxassetid://117909139728666"
+  sound.Volume = 10
+  sound.Parent = game:GetService("SoundService")
+  sound.Ended:Connect(function()
+    sound:Destroy()
+  end)
+  pcall(function()
+    if not sound.IsLoaded then
+      sound.Loaded:Wait()
+    end
+  end)
+  sound:Play()
+end)
+
+local getRayDirections = require(ReplicatedStorage:WaitForChild("Blaster"):WaitForChild("Utility"):WaitForChild("getRayDirections"))
+
+local function target()
+    if not Toggles.SilentAim then return nil end
+    local fov = Values.FOV
+    if fov <= 0 then return nil end
+
+    local center = Vector2.new(Camera.ViewportSize.X * 0.5, Camera.ViewportSize.Y * 0.5)
+    local best, bestDist = nil, math.huge
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local isTeammate = Toggles.TeamCheck and IsTeammate(plr)
+            if not isTeammate then
+                local char = plr.Character
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local targetPart = char:FindFirstChild(selectedTargetPart) or char:FindFirstChild("Head")
+                if targetPart and hum and hum.Health > 0 then
+                    local sp, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+                    if onScreen then
+                        local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                        if d <= fov and d < bestDist then
+                            local isVisible = true
+                            if Toggles.WallCheck then
+                                isVisible = WallCheck(char, targetPart)
+                            end
+                            if isVisible then
+                                best, bestDist = plr, d
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if not best or not best.Character then return nil end
+    local targetPart = best.Character:FindFirstChild(selectedTargetPart) or best.Character:FindFirstChild("Head")
+    return targetPart and targetPart.Position or nil
+end
+
+local function aimTarget()
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local fov = Values.AimFOV
+    if fov <= 0 then return nil end
+
+    local center = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.5)
+    local bestPos, bestDist = nil, math.huge
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character then
+            local isTeammate = Toggles.TeamCheck and IsTeammate(plr)
+            if not isTeammate then
+                local char = plr.Character
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local targetPart = char:FindFirstChild(aimTargetPart) or char:FindFirstChild("Head")
+                if targetPart and hum and hum.Health > 0 then
+                    local sp, onScreen = cam:WorldToViewportPoint(targetPart.Position)
+                    if onScreen then
+                        local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                        if d <= fov and d < bestDist then
+                            local isVisible = true
+                            if Toggles.WallCheck then
+                                isVisible = WallCheck(char, targetPart)
+                            end
+                            if isVisible then
+                                bestPos, bestDist = targetPart.Position, d
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestPos
+end
+
+local Hkiz; Hkiz = hookfunction(getRayDirections, newcclosure(function(originCFrame, count, spread, seed)
+    local targetPos = target()
+    if targetPos then
+        local dir = targetPos - originCFrame.Position
+        if dir.Magnitude > 0.001 then
+            local unit = dir.Unit
+            local out = table.create(count)
+            for i = 1, count do out[i] = unit end
+            return out
+        end
+    end
+    return Hkiz(originCFrame, count, spread, seed)
+end))
+
+local fovCircle
+local aimCircle
+pcall(function()
+    fovCircle = Drawing.new("Circle")
+    fovCircle.Visible = false
+    fovCircle.Filled = false
+    fovCircle.Thickness = 1
+    fovCircle.Color = Color3.fromRGB(255, 56, 56)
+    fovCircle.NumSides = 64
+    fovCircle.Transparency = 0.8
+
+    aimCircle = Drawing.new("Circle")
+    aimCircle.Visible = false
+    aimCircle.Filled = false
+    aimCircle.Thickness = 1
+    aimCircle.Color = Color3.fromRGB(255, 56, 56)
+    aimCircle.NumSides = 64
+    aimCircle.Transparency = 0.8
+end)
+
+RunService.RenderStepped:Connect(function()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local center = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.5)
+
+    if fovCircle then
+        if Toggles.SilentAim and Values.FOV > 0 then
+            fovCircle.Visible = true
+            fovCircle.Radius = Values.FOV
+            fovCircle.Position = center
+        else
+            fovCircle.Visible = false
+        end
+    end
+
+    if aimCircle then
+        if Toggles.Aimbot and Values.AimFOV > 0 then
+            aimCircle.Visible = true
+            aimCircle.Radius = Values.AimFOV
+            aimCircle.Position = center
+        else
+            aimCircle.Visible = false
+        end
+    end
+
+    if Toggles.Aimbot then
+        local pos = aimTarget()
+        if pos then
+            local cf = cam.CFrame
+            local goal = CFrame.new(cf.Position, pos)
+            local alpha = math.clamp(1 / math.max(Values.AimSmooth, 1), 0.03, 1)
+            cam.CFrame = cf:Lerp(goal, alpha)
+        end
+    end
+end)
+
+local function myRoot()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+RunService.Heartbeat:Connect(function()
+    if not Toggles.GodMode then
+        return
+    end
+    local hrp = myRoot()
+    if not hrp then
+        return
+    end
+    hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(0.5), 0)
+    local old = hrp.Velocity
+    hrp.Velocity = Vector3.new(0, -16384, 0)
+    RunService.RenderStepped:Wait()
+    hrp.Velocity = old
+end)
+
+RunService.Stepped:Connect(function()
+    if not Toggles.GodMode then
+        return
+    end
+    task.wait(0.1)
+    local hrp = myRoot()
+    if not hrp then
+        return
+    end
+    local old = hrp.AssemblyLinearVelocity
+    hrp.AssemblyLinearVelocity = Vector3.new(math.random(-2000, 6000), math.random(-13000, 3000), math.random(-6000, 2000))
+    RunService.RenderStepped:Wait()
+    hrp.AssemblyLinearVelocity = old
+end)
+
+local function findBlasterClass()
+    local function isClass(t)
+        return type(t) == "table"
+            and type(rawget(t, "shoot")) == "function"
+            and (type(rawget(t, "startShooting")) == "function" or type(rawget(t, "getSecondsPerShot")) == "function")
+    end
+
+    local folder = ReplicatedStorage:FindFirstChild("Blaster")
+    if folder then
+        local list = {folder}
+        for _, d in ipairs(folder:GetDescendants()) do
+            table.insert(list, d)
+        end
+        for _, inst in ipairs(list) do
+            if inst:IsA("ModuleScript") then
+                local ok, mod = pcall(require, inst)
+                if ok and isClass(mod) then
+                    return mod
+                end
+            end
+        end
+    end
+
+    if getgc then
+        local ok, gc = pcall(getgc, true)
+        if ok and type(gc) == "table" then
+            for _, v in ipairs(gc) do
+                if isClass(v) then
+                    return v
+                end
+            end
+        end
+    end
+    return nil
+end
+
+task.spawn(function()
+    local obj = findBlasterClass()
+    if not obj then
+        return
+    end
+
+    local Config = Toggles
+    local FIRE_RATE_INTERVAL = 0.02
+    local isShootingBlaster = false
+
+    local origGetSecondsPerShot = obj.getSecondsPerShot
+    obj.getSecondsPerShot = function(self, ...)
+        if Config.RapidFire then
+            return FIRE_RATE_INTERVAL
+        end
+        if origGetSecondsPerShot then
+            return origGetSecondsPerShot(self, ...)
+        end
+        return 0.1
+    end
+
+    local origStartShooting = obj.startShooting
+    obj.startShooting = function(self, ...)
+        if Config.RapidFire then
+            if self:canShoot() and not self.shooting then
+                if self.startAutoFireWhileHeld then
+                    self:startAutoFireWhileHeld(FIRE_RATE_INTERVAL)
+                elseif origStartShooting then
+                    origStartShooting(self, ...)
+                end
+            end
+            return
+        end
+        if origStartShooting then
+            return origStartShooting(self, ...)
+        end
+    end
+
+    local origRecoil = obj.recoil
+    obj.recoil = function(self, ...)
+        if Config.NoRecoil then
+            return
+        end
+        if origRecoil then
+            return origRecoil(self, ...)
+        end
+    end
+
+    local origWallCheck = obj.isWallBlockingShot
+    obj.isWallBlockingShot = function(self, ...)
+        if Config.NoRecoil then
+            return false
+        end
+        if origWallCheck then
+            return origWallCheck(self, ...)
+        end
+        return false
+    end
+
+    local origShoot = obj.shoot
+    obj.shoot = function(self, ...)
+        if Config.NoRecoil and self.blaster then
+            pcall(function()
+                self.blaster:SetAttribute("Spread", 0)
+            end)
+        end
+        isShootingBlaster = true
+        if origShoot then
+            origShoot(self, ...)
+        end
+        isShootingBlaster = false
+    end
+end)
+
+local espFolder = new("Folder", {Name = "BlazdersESP"}, parentGui)
+local espObjects = {}
+
+local function clearESP(plr)
+    local hl = espObjects[plr]
+    if hl then
+        hl:Destroy()
+        espObjects[plr] = nil
+    end
+end
+
+Players.PlayerRemoving:Connect(clearESP)
+
+task.spawn(function()
+    while gui.Parent do
+        if Toggles.ESP then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer then
+                    local char = plr.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    local valid = char and hum and hum.Health > 0 and not (Toggles.TeamCheck and IsTeammate(plr))
+                    if valid then
+                        local hl = espObjects[plr]
+                        if not hl or not hl.Parent then
+                            hl = new("Highlight", {
+                                FillColor = Color3.fromRGB(255, 0, 0),
+                                OutlineColor = Color3.fromRGB(255, 0, 0),
+                                FillTransparency = 0.5,
+                                OutlineTransparency = 0,
+                                DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                            }, espFolder)
+                            espObjects[plr] = hl
+                        end
+                        if hl.Adornee ~= char then
+                            hl.Adornee = char
+                        end
+                    else
+                        clearESP(plr)
+                    end
+                end
+            end
+        else
+            for plr in pairs(espObjects) do
+                clearESP(plr)
+            end
+        end
+        task.wait(0.2)
+    end
+    for plr in pairs(espObjects) do
+        clearESP(plr)
+    end
+end)
+
+local flyControls
+task.spawn(function()
+    pcall(function()
+        flyControls = require(LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule")):GetControls()
+    end)
+end)
+
+RunService.RenderStepped:Connect(function()
+    if not Toggles.Fly then
+        return
+    end
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local cam = workspace.CurrentCamera
+    if not hrp or not cam then
+        return
+    end
+
+    local move = Vector3.new(0, 0, 0)
+    local gotMove = false
+    if flyControls then
+        local ok, v = pcall(function()
+            return flyControls:GetMoveVector()
+        end)
+        if ok and typeof(v) == "Vector3" then
+            move = v
+            gotMove = true
+        end
+    end
+    if not gotMove then
+        local x = (UserInputService:IsKeyDown(Enum.KeyCode.D) and 1 or 0) - (UserInputService:IsKeyDown(Enum.KeyCode.A) and 1 or 0)
+        local z = (UserInputService:IsKeyDown(Enum.KeyCode.S) and 1 or 0) - (UserInputService:IsKeyDown(Enum.KeyCode.W) and 1 or 0)
+        move = Vector3.new(x, 0, z)
+    end
+
+    local dir = cam.CFrame:VectorToWorldSpace(move)
+    if dir.Magnitude > 1 then
+        dir = dir.Unit
+    end
+
+    local vertical = 0
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+        vertical = vertical + 1
+    end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+        vertical = vertical - 1
+    end
+
+    hrp.AssemblyLinearVelocity = dir * Values.FlySpeed + Vector3.new(0, vertical * Values.FlySpeed, 0)
+    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+end)
+
+print("Adonis Anti-Cheat Bypass activated.")
+local getinfo = getinfo or debug.getinfo
+local DEBUG = false
+local Hooked = {}
+
+local Detected, Kill
+
+setthreadidentity(2)
+
+for i, v in getgc(true) do
+    if typeof(v) == "table" then
+        local DetectFunc = rawget(v, "Detected")
+        local KillFunc = rawget(v, "Kill")
+    
+        if typeof(DetectFunc) == "function" and not Detected then
+            Detected = DetectFunc
+            
+            local Old; Old = hookfunction(Detected, function(Action, Info, NoCrash)
+                if Action ~= "_" then
+                    if DEBUG then
+                        warn(`Adonis AntiCheat flagged\nMethod: {Action}\nInfo: {Info}`)
+                    end
+                end
+                
+                return true
+            end)
+
+            table.insert(Hooked, Detected)
+        end
+
+        if rawget(v, "Variables") and rawget(v, "Process") and typeof(KillFunc) == "function" and not Kill then
+            Kill = KillFunc
+            local Old; Old = hookfunction(Kill, function(Info)
+                if DEBUG then
+                    warn(`Adonis AntiCheat tried to kill (fallback): {Info}`)
+                end
+            end)
+
+            table.insert(Hooked, Kill)
+        end
+    end
+end
+
+local Old; Old = hookfunction(getrenv().debug.info, newcclosure(function(...)
+    local LevelOrFunc, Info = ...
+
+    if Detected and LevelOrFunc == Detected then
+        if DEBUG then
+            warn(`zins | adonis bypassed`)
+        end
+
+        return coroutine.yield(coroutine.running())
+    end
+    
+    return Old(...)
+end))
+
+setthreadidentity(7)
