@@ -1,0 +1,709 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UIS = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local config = {
+	SA2_Enabled = false,
+	SA2_TeamTarget = "Enemies",
+	SA2_TargetPart = "Head",
+	SA2_AimMethods = { "Raycast" },
+	SA2_HitChance = 100,
+	SA2_HeadshotChance = 100,
+	SA2_Prediction = 0.15,
+	SA2_Wallbang = false,
+	SA2_ThreeSixtyMode = false,
+	SA2_Wallcheck = false,
+	SA2_TargetRange = 500,
+	SA2_FovRadius = 150,
+	SA2_FovVisible = true,
+	SA2_FovColor = Color3.fromRGB(0, 0, 0),
+	SA2_FovColourTarget = Color3.fromRGB(255, 255, 0),
+	SA2_FovTransparency = 0.7,
+	SA2_FovIsTargeted = false,
+	SA2_currentTarget = nil,
+	varibz = { respawnLock = false },
+}
+
+local folkenstein______ = nil
+
+local function getRoot(char)
+	return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHead(char)
+	return char and char:FindFirstChild("Head")
+end
+
+local function getHum(char)
+	return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+-- despite the name, this returns TRUE when the player should be EXCLUDED
+local function isTeammate(plr)
+	if config.SA2_TeamTarget == "All" then
+		return false
+	end
+	if not plr.Team or not LocalPlayer.Team then
+		return false
+	end
+	local same = (plr.Team == LocalPlayer.Team) or (plr.TeamColor == LocalPlayer.TeamColor)
+	if config.SA2_TeamTarget == "Enemies" then
+		return same
+	end
+	if config.SA2_TeamTarget == "Teams" then
+		return not same
+	end
+	return false
+end
+
+local function predictthatpos(targetPart)
+	if not targetPart or not targetPart.Parent then
+		return targetPart and targetPart.Position or nil
+	end
+	local predTime = tonumber(config.SA2_Prediction) or 0
+	if predTime <= 0 then
+		return targetPart.Position
+	end
+	local ok, vel = pcall(function()
+		return targetPart.Velocity
+	end)
+	if not ok or not vel then
+		vel = Vector3.new(0, 0, 0)
+	end
+	local clampedTime = math.clamp(predTime, 0, 0.5)
+	return targetPart.Position + (vel * clampedTime)
+end
+
+local function rollChance(chance)
+	if chance == 100 then
+		return true
+	end
+	if chance <= 0 then
+		return false
+	end
+	return math.random(1, 100) <= chance
+end
+
+local function aimmethodsContains(name)
+	for _, m in ipairs(config.SA2_AimMethods or {}) do
+		if m == name then
+			return true
+		end
+	end
+	return false
+end
+
+local function raycastVisible(origin, targetPart)
+	if not config.SA2_Wallcheck then
+		return true
+	end
+	local dir = targetPart.Position - origin
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { LocalPlayer.Character, Camera }
+	params.IgnoreWater = true
+	local result = Workspace:Raycast(origin, dir, params)
+	if not result then
+		return true
+	end
+	return result.Instance and result.Instance:IsDescendantOf(targetPart.Parent)
+end
+
+local function getClosestTarget()
+	local myChar = LocalPlayer.Character
+	local myRoot = getRoot(myChar)
+	if not myRoot or not Camera then
+		return nil
+	end
+	local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	local closest, shortest = nil, config.SA2_FovRadius
+	local origin = Camera.CFrame.Position
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer and plr.Character and not isTeammate(plr) then
+			local hum = getHum(plr.Character)
+			local part = nil
+
+			if config.SA2_TargetPart == "Head" then
+				part = getHead(plr.Character)
+			elseif config.SA2_TargetPart == "HumanoidRootPart" then
+				part = getRoot(plr.Character)
+			elseif config.SA2_TargetPart == "Random" then
+				if math.random(1, 100) <= config.SA2_HeadshotChance then
+					part = getHead(plr.Character)
+				else
+					part = getRoot(plr.Character)
+				end
+			end
+
+if not part then
+				part = getHead(plr.Character) or getRoot(plr.Character)
+			end
+
+			if hum and hum.Health > 0 and part then
+				local predicted = predictthatpos(part)
+				local dist3D = (myRoot.Position - predicted).Magnitude
+
+				if dist3D <= config.SA2_TargetRange then
+					if config.SA2_ThreeSixtyMode then
+						if raycastVisible(origin, part) then
+							if dist3D < shortest then
+								shortest = dist3D
+								closest = part
+							end
+						end
+					else
+						local screenPos, onScreen = Camera:WorldToViewportPoint(predicted)
+						if onScreen then
+							local dist = (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude
+							if dist < shortest then
+								if raycastVisible(origin, part) then
+									shortest = dist
+									closest = part
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return closest
+end
+
+-- ===== the actual silent aim: __namecall hook on Workspace:Raycast =====
+local originalNamecall
+originalNamecall = hookmetamethod(game, "__namecall", newcclosure(function(...)
+	if config.varibz.respawnLock or not config.SA2_Enabled then
+		return originalNamecall(...)
+	end
+
+	local self = ...
+	local method = getnamecallmethod()
+
+	if method ~= "Raycast" then
+		return originalNamecall(...)
+	end
+	if checkcaller() then
+		return originalNamecall(...)
+	end
+	if not aimmethodsContains("Raycast") then
+		return originalNamecall(...)
+	end
+
+	if not config.SA2_ThreeSixtyMode and not rollChance(config.SA2_HitChance) then
+		config.SA2_FovIsTargeted = false
+		return originalNamecall(...)
+	end
+
+	local HitPart = folkenstein______
+	if not HitPart or not HitPart.Parent then
+		config.SA2_FovIsTargeted = false
+		return originalNamecall(...)
+	end
+	config.SA2_FovIsTargeted = true
+
+	local targetPos = predictthatpos(HitPart)
+	if not targetPos then
+		return originalNamecall(...)
+	end
+
+	local Arguments = { ... }
+	local Origin = Arguments[2]
+	local Direction = Arguments[3]
+
+	if typeof(Origin) ~= "Vector3" or typeof(Direction) ~= "Vector3" then
+		return originalNamecall(...)
+	end
+
+	if config.SA2_Wallbang then
+		-- skip the real world test entirely: return a synthetic hit on the target
+		local toTarget = targetPos - Origin
+		local distance = toTarget.Magnitude
+		local normal = (Origin - targetPos).Unit
+		local fakeResult = {
+			Instance = HitPart,
+			Position = targetPos,
+			Normal = normal,
+			Material = HitPart.Material or Enum.Material.Plastic,
+			Distance = distance,
+			Hit = true,
+		}
+		pcall(function()
+			fakeResult.Origin = Origin
+			fakeResult.Direction = Direction.Unit
+		end)
+		return fakeResult
+	end
+
+local newDir = (targetPos - Origin).Unit
+	Arguments[3] = newDir * Direction.Magnitude
+	return originalNamecall(unpack(Arguments))
+end))
+
+-- ===== GUI =====
+local existingGui = PlayerGui:FindFirstChild("NexusAimAssist")
+if existingGui then
+	existingGui:Destroy()
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "NexusAimAssist"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.DisplayOrder = 100
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = PlayerGui
+
+local toggleButton = Instance.new("ImageButton")
+toggleButton.Name = "ToggleButton"
+toggleButton.Size = UDim2.fromOffset(48, 48)
+toggleButton.AnchorPoint = Vector2.new(0.5, 0.5)
+toggleButton.Position = UDim2.new(1, -70, 0.5, 0)
+toggleButton.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+toggleButton.BackgroundTransparency = 0.15
+toggleButton.BorderSizePixel = 0
+toggleButton.ClipsDescendants = true
+toggleButton.Image = "rbxthumb://type=Asset&id=126264488847292&w=420&h=420"
+toggleButton.ScaleType = Enum.ScaleType.Crop
+toggleButton.ImageTransparency = 0
+toggleButton.ZIndex = 10
+toggleButton.Visible = true
+toggleButton.Active = true
+toggleButton.AutoButtonColor = false
+toggleButton.Parent = screenGui
+Instance.new("UICorner", toggleButton).CornerRadius = UDim.new(0, 12)
+
+local toggleButtonStroke = Instance.new("UIStroke")
+toggleButtonStroke.Thickness = 1
+toggleButtonStroke.Color = Color3.fromRGB(75, 75, 85)
+toggleButtonStroke.Transparency = 0
+toggleButtonStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+toggleButtonStroke.Parent = toggleButton
+
+local buttonDragging = false
+local buttonWasDragged = false
+local buttonDragStart, buttonStartPos
+local currentButtonInput
+
+local function updateButtonDrag(input)
+	local delta = input.Position - buttonDragStart
+	if delta.Magnitude > 8 then
+		buttonWasDragged = true
+	end
+	local newPos = UDim2.new(
+		buttonStartPos.X.Scale,
+		buttonStartPos.X.Offset + delta.X,
+		buttonStartPos.Y.Scale,
+		buttonStartPos.Y.Offset + delta.Y
+	)
+	toggleButton.Position = toggleButton.Position:Lerp(newPos, 0.35)
+end
+
+toggleButton.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		buttonDragging = true
+		buttonWasDragged = false
+		buttonDragStart = input.Position
+		buttonStartPos = toggleButton.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				buttonDragging = false
+			end
+		end)
+	end
+end)
+
+toggleButton.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch then
+		currentButtonInput = input
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if input == currentButtonInput and buttonDragging then
+		updateButtonDrag(input)
+	end
+end)
+
+local miniMenu = Instance.new("Frame")
+miniMenu.Name = "MiniMenu"
+miniMenu.Size = UDim2.fromOffset(220, 340)
+miniMenu.AnchorPoint = Vector2.new(0.5, 0.5)
+miniMenu.Position = UDim2.new(0.5, 0, 0.5, 0)
+miniMenu.BackgroundColor3 = Color3.fromRGB(20, 20, 24)
+miniMenu.BackgroundTransparency = 0.15
+miniMenu.BorderSizePixel = 0
+miniMenu.ClipsDescendants = true
+miniMenu.Visible = false
+miniMenu.Active = true
+miniMenu.Parent = screenGui
+Instance.new("UICorner", miniMenu).CornerRadius = UDim.new(0, 10)
+
+local miniMenuStroke = Instance.new("UIStroke")
+miniMenuStroke.Thickness = 1
+miniMenuStroke.Color = Color3.fromRGB(75, 75, 85)
+miniMenuStroke.Parent = miniMenu
+
+local backgroundImage = Instance.new("ImageLabel")
+backgroundImage.Name = "BackgroundImage"
+backgroundImage.Size = UDim2.fromScale(1, 1)
+backgroundImage.Position = UDim2.fromScale(0, 0)
+backgroundImage.BackgroundTransparency = 1
+backgroundImage.BorderSizePixel = 0
+backgroundImage.Image = "rbxthumb://type=Asset&id=126264488847292&w=420&h=420"
+backgroundImage.ScaleType = Enum.ScaleType.Crop
+backgroundImage.ImageTransparency = 0
+backgroundImage.ZIndex = 1
+backgroundImage.Parent = miniMenu
+Instance.new("UICorner", backgroundImage).CornerRadius = UDim.new(0, 10)
+
+local backgroundOverlay = Instance.new("Frame")
+backgroundOverlay.Name = "BackgroundOverlay"
+backgroundOverlay.Size = UDim2.fromScale(1, 1)
+backgroundOverlay.Position = UDim2.fromScale(0, 0)
+backgroundOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+backgroundOverlay.BackgroundTransparency = 0.48
+backgroundOverlay.BorderSizePixel = 0
+backgroundOverlay.ZIndex = 1
+backgroundOverlay.Parent = miniMenu
+Instance.new("UICorner", backgroundOverlay).CornerRadius = UDim.new(0, 10)
+
+local title = Instance.new("TextLabel")
+title.Name = "Title"
+title.BackgroundTransparency = 1
+title.Position = UDim2.fromOffset(10, 5)
+title.Size = UDim2.new(1, -20, 0, 25)
+title.Font = Enum.Font.GothamBold
+title.Text = "Nexus Aim Assist"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 14
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.ZIndex = 3
+title.Parent = miniMenu
+
+local subtitle = Instance.new("TextLabel")
+subtitle.Name = "Subtitle"
+subtitle.BackgroundTransparency = 1
+subtitle.Position = UDim2.fromOffset(10, 24)
+subtitle.Size = UDim2.new(1, -20, 0, 14)
+subtitle.Font = Enum.Font.Gotham
+subtitle.Text = "developed by hudas"
+subtitle.TextColor3 = Color3.fromRGB(170, 170, 175)
+subtitle.TextSize = 9
+subtitle.TextXAlignment = Enum.TextXAlignment.Left
+subtitle.ZIndex = 3
+subtitle.Parent = miniMenu
+
+local contentScroll = Instance.new("ScrollingFrame")
+contentScroll.Name = "ContentScroll"
+contentScroll.Size = UDim2.new(1, -20, 1, -50)
+contentScroll.Position = UDim2.fromOffset(10, 44)
+contentScroll.BackgroundTransparency = 1
+contentScroll.BorderSizePixel = 0
+contentScroll.ScrollBarThickness = 4
+contentScroll.ScrollBarImageColor3 = Color3.fromRGB(120, 120, 130)
+contentScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+contentScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+contentScroll.ZIndex = 3
+contentScroll.Parent = miniMenu
+
+local contentLayout = Instance.new("UIListLayout")
+contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+contentLayout.Padding = UDim.new(0, 6)
+contentLayout.Parent = contentScroll
+
+local function makeButton(text, color, height)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, height or 30)
+	btn.BackgroundTransparency = 0.45
+	btn.BackgroundColor3 = color
+	btn.BorderSizePixel = 0
+	btn.Font = Enum.Font.GothamBold
+	btn.Text = text
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.TextSize = 12
+	btn.AutoButtonColor = false
+	btn.ZIndex = 3
+	btn.Parent = contentScroll
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+	return btn
+end
+
+local function makeToggle(text, defaultOn, callback)
+	local btn = makeButton(
+		text .. (defaultOn and ": ON" or ": OFF"),
+		defaultOn and Color3.fromRGB(75, 75, 88) or Color3.fromRGB(43, 43, 51),
+		30
+	)
+	local state = defaultOn
+	btn.Activated:Connect(function()
+		state = not state
+		btn.Text = text .. (state and ": ON" or ": OFF")
+		btn.BackgroundColor3 = state and Color3.fromRGB(75, 75, 88) or Color3.fromRGB(43, 43, 51)
+		callback(state)
+	end)
+	return btn
+end
+
+local function makeSlider(labelText, min, max, default, isInt, callback)
+	local wrap = Instance.new("Frame")
+	wrap.Size = UDim2.new(1, 0, 0, 42)
+	wrap.BackgroundTransparency = 1
+	wrap.ZIndex = 3
+	wrap.Parent = contentScroll
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, 0, 0, 16)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = labelText .. ": " .. (isInt and math.floor(default) or string.format("%.2f", default))
+	lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+	lbl.Font = Enum.Font.GothamSemibold
+	lbl.TextSize = 11
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.ZIndex = 3
+	lbl.Parent = wrap
+
+	local bg = Instance.new("Frame")
+	bg.Size = UDim2.new(1, 0, 0, 6)
+	bg.Position = UDim2.fromOffset(0, 22)
+	bg.BackgroundColor3 = Color3.fromRGB(60, 60, 68)
+	bg.BorderSizePixel = 0
+	bg.ZIndex = 3
+	bg.Parent = wrap
+	Instance.new("UICorner", bg).CornerRadius = UDim.new(1, 0)
+
+	local knob = Instance.new("TextButton")
+	knob.Size = UDim2.new(0, 14, 0, 14)
+	knob.AnchorPoint = Vector2.new(0.5, 0.5)
+	knob.Position = UDim2.new((default - min) / (max - min), 0, 0.5, 0)
+	knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	knob.Text = ""
+	knob.ZIndex = 3
+	knob.Parent = bg
+	Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+	local dragging = false
+	knob.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+		end
+	end)
+	UIS.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+	UIS.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch) then
+			local mouseX = input.Position.X
+			local absX = bg.AbsolutePosition.X
+			local sizeX = bg.AbsoluteSize.X
+			local rel = math.clamp((mouseX - absX) / sizeX, 0, 1)
+			knob.Position = UDim2.new(rel, 0, 0.5, 0)
+
+			local val = min + rel * (max - min)
+			if isInt then
+				val = math.floor(val)
+				lbl.Text = labelText .. ": " .. val
+			else
+				lbl.Text = labelText .. ": " .. string.format("%.2f", val)
+			end
+			callback(val)
+		end
+	end)
+	return wrap
+end
+
+local masterBtn = makeButton("Silent Aim: OFF", Color3.fromRGB(43, 43, 51), 34)
+masterBtn.LayoutOrder = 1
+
+local statusLbl = Instance.new("TextLabel")
+statusLbl.Size = UDim2.new(1, 0, 0, 16)
+statusLbl.BackgroundTransparency = 1
+statusLbl.Text = "Status: IDLE"
+statusLbl.TextColor3 = Color3.fromRGB(170, 170, 175)
+statusLbl.Font = Enum.Font.GothamSemibold
+statusLbl.TextSize = 10
+statusLbl.TextXAlignment = Enum.TextXAlignment.Left
+statusLbl.ZIndex = 3
+statusLbl.LayoutOrder = 2
+statusLbl.Parent = contentScroll
+
+local teamToggle = makeToggle("Team Check", true, function(v)
+	config.SA2_TeamTarget = v and "Enemies" or "All"
+end)
+teamToggle.LayoutOrder = 3
+
+local wallToggle = makeToggle("Wall Check", false, function(v)
+	config.SA2_Wallcheck = v
+end)
+wallToggle.LayoutOrder = 4
+
+local wallbangToggle = makeToggle("Wallbang", false, function(v)
+	config.SA2_Wallbang = v
+end)
+wallbangToggle.LayoutOrder = 5
+
+local threeSixtyToggle = makeToggle("360 Mode", false, function(v)
+	config.SA2_ThreeSixtyMode = v
+end)
+threeSixtyToggle.LayoutOrder = 6
+
+local fovVisibleToggle = makeToggle("FOV Visible", true, function(v)
+	config.SA2_FovVisible = v
+end)
+fovVisibleToggle.LayoutOrder = 7
+
+local parts = { "Head", "HumanoidRootPart", "Random" }
+local partIdx = 1
+local partBtn = makeButton("Target Part: " .. config.SA2_TargetPart, Color3.fromRGB(60, 60, 75), 30)
+partBtn.LayoutOrder = 8
+partBtn.Activated:Connect(function()
+	partIdx = partIdx % #parts + 1
+	config.SA2_TargetPart = parts[partIdx]
+	partBtn.Text = "Target Part: " .. config.SA2_TargetPart
+end)
+
+local hitSlider = makeSlider("Hit Chance", 0, 100, 100, true, function(v)
+	config.SA2_HitChance = v
+end)
+hitSlider.LayoutOrder = 9
+
+local predSlider = makeSlider("Prediction", 0, 0.5, 0.15, false, function(v)
+	config.SA2_Prediction = v
+end)
+predSlider.LayoutOrder = 10
+
+local fovSlider = makeSlider("FOV Radius", 50, 500, 150, true, function(v)
+	config.SA2_FovRadius = v
+end)
+fovSlider.LayoutOrder = 11
+
+local rangeSlider = makeSlider("Range", 50, 2000, 500, true, function(v)
+	config.SA2_TargetRange = v
+end)
+rangeSlider.LayoutOrder = 12
+
+local menuDragging = false
+local menuDragStart, menuStartPos
+local currentMenuInput
+
+local function updateMenuDrag(input)
+	local delta = input.Position - menuDragStart
+	local newPos = UDim2.new(
+		menuStartPos.X.Scale,
+		menuStartPos.X.Offset + delta.X,
+		menuStartPos.Y.Scale,
+		menuStartPos.Y.Offset + delta.Y
+	)
+	miniMenu.Position = miniMenu.Position:Lerp(newPos, 0.35)
+end
+
+miniMenu.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		menuDragging = true
+		menuDragStart = input.Position
+		menuStartPos = miniMenu.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				menuDragging = false
+			end
+		end)
+	end
+end)
+
+miniMenu.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch then
+		currentMenuInput = input
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if input == currentMenuInput and menuDragging then
+		updateMenuDrag(input)
+	end
+end)
+
+toggleButton.Activated:Connect(function()
+	if buttonWasDragged then
+		buttonWasDragged = false
+		return
+	end
+	miniMenu.Visible = not miniMenu.Visible
+end)
+
+local function toggleMaster()
+	config.SA2_Enabled = not config.SA2_Enabled
+	if config.SA2_Enabled then
+		masterBtn.Text = "Silent Aim: ON"
+		masterBtn.BackgroundColor3 = Color3.fromRGB(95, 35, 35)
+		statusLbl.Text = "Status: ACTIVE"
+		statusLbl.TextColor3 = Color3.fromRGB(255, 200, 100)
+	else
+		masterBtn.Text = "Silent Aim: OFF"
+		masterBtn.BackgroundColor3 = Color3.fromRGB(43, 43, 51)
+		statusLbl.Text = "Status: IDLE"
+		statusLbl.TextColor3 = Color3.fromRGB(170, 170, 175)
+		folkenstein______ = nil
+	end
+end
+
+masterBtn.Activated:Connect(toggleMaster)
+
+UIS.InputBegan:Connect(function(input, gp)
+	if gp then
+		return
+	end
+	if input.KeyCode == Enum.KeyCode.RightShift then
+		toggleMaster()
+	end
+end)
+
+local fovGui = Instance.new("ScreenGui")
+fovGui.Name = "RaycastFOV"
+fovGui.ResetOnSpawn = false
+fovGui.IgnoreGuiInset = true
+fovGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+fovGui.Parent = PlayerGui
+
+local circle = Instance.new("Frame")
+circle.AnchorPoint = Vector2.new(0.5, 0.5)
+circle.Size = UDim2.new(0, config.SA2_FovRadius * 2, 0, config.SA2_FovRadius * 2)
+circle.Position = UDim2.new(0.5, 0, 0.5, -28)
+circle.BackgroundTransparency = 1
+circle.Visible = false
+circle.Parent = fovGui
+Instance.new("UICorner", circle).CornerRadius = UDim.new(1, 0)
+
+local circleStroke = Instance.new("UIStroke", circle)
+circleStroke.Thickness = 1
+circleStroke.Transparency = 1 - config.SA2_FovTransparency
+circleStroke.Color = config.SA2_FovColor
+circleStroke.Parent = circle
+
+RunService.Heartbeat:Connect(function()
+	if config.SA2_Enabled then
+		folkenstein______ = getClosestTarget()
+		config.SA2_currentTarget = folkenstein______
+	else
+		folkenstein______ = nil
+	end
+
+LocalPlayer.CharacterAdded:Connect(function()
+	task.wait(1)
+	config.varibz.respawnLock = false
+end)
